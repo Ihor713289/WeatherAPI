@@ -1,4 +1,4 @@
-using StationDataRetriever;
+using ImageStarter;
 
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddHostedService<Worker>();

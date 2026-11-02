@@ -9,14 +9,19 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Azure.Data.Tables" Version="12.12.0" />
-        <PackageReference Include="Azure.Storage.Blobs" Version="12.29.2" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12"/>
+        <PackageReference Include="Azure.Data.Tables" Version="12.13.0" />
+        <PackageReference Include="Azure.Storage.Blobs" Version="12.30.1" />
+        <PackageReference Include="Azure.Storage.Queues" Version="12.28.1" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="11.0.0-rc.2.26504.105" />
     </ItemGroup>
 
     <ItemGroup>
       <Content Include="..\.dockerignore">
         <Link>.dockerignore</Link>
       </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\WeatherAPI\WeatherAPI.csproj" />
     </ItemGroup>
 </Project>

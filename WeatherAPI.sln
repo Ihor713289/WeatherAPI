@@ -4,7 +4,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WeatherAPI", "WeatherAPI\We
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImageGenerator", "ImageGenerator\ImageGenerator.csproj", "{8EFACEF4-86EA-46AE-B03C-0521D0B282E5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StationDataRetriever", "StationDataRetriever\StationDataRetriever.csproj", "{2E8E3A4F-C850-4DC0-89C8-14FC80703B04}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ImageStarter", "ImageStarter\ImageStarter.csproj", "{2E8E3A4F-C850-4DC0-89C8-14FC80703B04}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Azure;
 using Azure.Storage.Queues;
 using Azure.Storage.Queues.Models;
 using WeatherAPI.DTOs;
@@ -7,15 +8,26 @@ namespace WeatherAPI.Messaging;
 
 public class AzureQueuePublisher : IQueuePublisher
 {
-    private readonly QueueClient _queueClient;
+    private QueueClient _queueClient;
 
     public AzureQueuePublisher(IConfiguration configuration)
     {
         _queueClient = new QueueClient(
             configuration["QueueConfig:ConnectionString"],
-            configuration["QueueConfig:QueueName"]
+            configuration["QueueConfig:ProcessesQueueName"]
         );
         _queueClient.CreateIfNotExistsAsync(cancellationToken: default);
+    }
+    
+    
+    public IQueuePublisher ChangeQueueName(IConfiguration configuration, string queueName)
+    {
+        _queueClient = new QueueClient(
+            configuration["QueueConfig:ConnectionString"],
+            configuration[$"QueueConfig:{queueName}"]
+        );
+        _queueClient.CreateIfNotExistsAsync(cancellationToken: default);
+        return this;
     }
 
     public async Task<string> PublishAsync<T>(
@@ -32,36 +44,25 @@ public class AzureQueuePublisher : IQueuePublisher
 
         return receipt.MessageId;
     }
-    
-    public async Task<QueueMessagePeekResult?> PeekAsync(
-        string messageId,
-        int maxMessages = 32,
+
+    public async Task<QueueMessage> ReceiveMessageAsync(
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(messageId))
-        {
-            throw new ArgumentException("Message id is required.", nameof(messageId));
-        }
-        
         await _queueClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
 
-        maxMessages = 32;
-        PeekedMessage[] messages = await _queueClient.PeekMessagesAsync(
-            maxMessages: maxMessages,
+        QueueMessage message = await _queueClient.ReceiveMessageAsync(
             cancellationToken: cancellationToken);
 
-        var message = messages.FirstOrDefault(x => x.MessageId == messageId);
+        return message;
+    }
 
-        if (message is null)
-        {
-            return null;
-        }
+    public async Task<Response> DeleteAsync(
+        string messageId, string popReceipt, CancellationToken cancellationToken
+    )
+    {
+        await _queueClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
 
-        return new QueueMessagePeekResult(
-            message.MessageId,
-            message.Body.ToString(),
-            message.InsertedOn,
-            message.ExpiresOn,
-            message.DequeueCount);
+        return await _queueClient.DeleteMessageAsync(
+            messageId, popReceipt, cancellationToken);
     }
 }

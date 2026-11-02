@@ -1,4 +1,6 @@
-﻿using WeatherAPI.DTOs;
+﻿using Azure;
+using Azure.Storage.Queues.Models;
+using WeatherAPI.DTOs;
 
 namespace WeatherAPI.Messaging;
 
@@ -8,8 +10,13 @@ public interface IQueuePublisher
         T message,
         CancellationToken cancellationToken = default);
     
-    Task<QueueMessagePeekResult?> PeekAsync(
+    Task<Response> DeleteAsync(
         string messageId,
-        int maxMessages = 32,
+        string popReceipt,
         CancellationToken cancellationToken = default);
+    
+    Task<QueueMessage> ReceiveMessageAsync(
+        CancellationToken cancellationToken = default);
+    
+    IQueuePublisher ChangeQueueName(IConfiguration configuration, string queueName);
 }

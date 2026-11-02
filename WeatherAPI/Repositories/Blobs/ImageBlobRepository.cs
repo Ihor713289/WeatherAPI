@@ -42,23 +42,6 @@ public class ImageBlobRepository : IImageBlobRepository
         return blobClient.Uri.ToString();
     }
 
-    public async Task<List<byte[]>> DownloadImagesAsync(List<string> imageUrls)
-    {
-        if (imageUrls is null)
-        {
-            throw new ArgumentNullException(nameof(imageUrls));
-        }
-
-        var images = new List<byte[]>();
-
-        foreach (var imageUrl in imageUrls)
-        {
-            images.Add(await DownloadImageAsync(imageUrl));
-        }
-
-        return images;
-    }
-
     public async Task DeleteImageAsync(string imageUrl)
     {
         if (string.IsNullOrWhiteSpace(imageUrl))
@@ -68,21 +51,6 @@ public class ImageBlobRepository : IImageBlobRepository
 
         var blobClient = GetBlobClientFromUrl(imageUrl);
         await blobClient.DeleteIfExistsAsync();
-    }
-
-    public async Task<byte[]> DownloadImageAsync(string imageUrl)
-    {
-        if (string.IsNullOrWhiteSpace(imageUrl))
-        {
-            throw new ArgumentException("Image url is required.", nameof(imageUrl));
-        }
-
-        var blobClient = GetBlobClientFromUrl(imageUrl);
-
-        await using var stream = new MemoryStream();
-        await blobClient.DownloadToAsync(stream);
-
-        return stream.ToArray();
     }
 
     public Task<string> GetImageSasUrlAsync(string imageUrl)
