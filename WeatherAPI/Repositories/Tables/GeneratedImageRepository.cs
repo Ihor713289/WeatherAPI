@@ -12,8 +12,8 @@ public class GeneratedImageRepository: IGeneratedImageRepository
         _tableClient = service.GetTableClient(configuration["TableConfig:GeneratedImagesTableName"]);
         _tableClient.CreateIfNotExists();
     }
-    public Task<List<GeneratedImage>> GetGeneratedImages(string processId)
+    public async Task<List<GeneratedImage>> GetGeneratedImages(string processId)
     {
-        throw new NotImplementedException();
+        return await _tableClient.QueryAsync<GeneratedImage>(x => x.PartitionKey == processId).ToListAsync();
     }
 }

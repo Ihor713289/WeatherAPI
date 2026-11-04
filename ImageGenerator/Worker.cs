@@ -1,6 +1,8 @@
+using WeatherAPI.Messaging;
+
 namespace ImageGenerator;
 
-public class Worker(ILogger<Worker> logger) : BackgroundService
+public class Worker(ILogger<Worker> logger, IQueuePublisher _queuePublisher) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

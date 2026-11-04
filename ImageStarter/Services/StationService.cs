@@ -7,7 +7,7 @@ public class StationService : IStationService
 {
     public async Task<List<WeatherStation>?> GetStations()
     {
-        var response = await new HttpClient().GetAsync("https://data.buienradar.nl/2.0/feed/json");
-        return await response.Content.ReadFromJsonAsync<List<WeatherStation>>();
+        var response = await new HttpClient().GetFromJsonAsync<BuienradarResponse>("https://data.buienradar.nl/2.0/feed/json");
+        return response?.Actual?.StationMeasurements;
     }
 }

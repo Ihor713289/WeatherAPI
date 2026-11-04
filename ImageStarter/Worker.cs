@@ -8,51 +8,41 @@ using System.Text.Json;
 
 namespace ImageStarter;
 
-public class Worker(ILogger<Worker> logger) : BackgroundService
+public class Worker(IConfiguration _configuration,
+    IQueuePublisher _queuePublisher,
+    IStationService _stationService,
+    ILogger _logger) : BackgroundService
 {
-    private IConfiguration _configuration;
-    private IQueuePublisher _queuePublisher;
-    private IStationService _stationService;
-
-    public Worker(IConfiguration configuration, ILogger<Worker> logger, IQueuePublisher queuePublisher, IStationService stationService) : this(logger)
-    {
-        _configuration = configuration;
-        _queuePublisher = queuePublisher;
-        _stationService = stationService;
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (logger.IsEnabled(LogLevel.Information))
+            if (_logger.IsEnabled(LogLevel.Information))
             {
-                logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
             }
 
             QueueMessage message = await GetNextProcessMessage(stoppingToken);
             if (message != null)
             {
-                await ProcessMessage(message, stoppingToken);
+                await ProcessMessage(stoppingToken);
             }
-
             await Task.Delay(1000, stoppingToken);
         }
     }
 
-    protected Task<QueueMessage> GetNextProcessMessage(CancellationToken cancellationToken)
+    private Task<QueueMessage> GetNextProcessMessage(CancellationToken cancellationToken)
     {
         return _queuePublisher.ReceiveMessageAsync(cancellationToken);
     }
-
-
+    
     private IQueuePublisher ConfigureImageQueuePublisher()
     {
         _queuePublisher = _queuePublisher.ChangeQueueName(_configuration, "ImagesQueueName");
         return _queuePublisher;
     }
 
-    private async Task ProcessMessage(QueueMessage message, CancellationToken cancellationToken)
+    private async Task ProcessMessage(CancellationToken cancellationToken)
     {
         var stations = await _stationService.GetStations();
         if (stations == null)
@@ -62,13 +52,18 @@ public class Worker(ILogger<Worker> logger) : BackgroundService
         ConfigureImageQueuePublisher();
         foreach (var station in stations)
         {
-            await PublishStationMessage(station, message, cancellationToken);
+            string message = StationToMessage(station);
+            await PublishStationMessage(message, cancellationToken);
         }
     }
 
-    private async Task PublishStationMessage(WeatherStation station, QueueMessage message, CancellationToken cancellationToken)
+    private async Task PublishStationMessage(string message, CancellationToken cancellationToken)
     {
-        var stationJson = JsonSerializer.Serialize(station);
-        await _queuePublisher.PublishAsync(stationJson, cancellationToken);
+        await _queuePublisher.PublishAsync(message, cancellationToken);
+    }
+    
+    private String StationToMessage(WeatherStation station)
+    {
+        return JsonSerializer.Serialize(station);
     }
 }

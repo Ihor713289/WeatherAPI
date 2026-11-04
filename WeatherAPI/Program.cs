@@ -11,6 +11,7 @@ builder.Services.AddControllers();
 builder.Services.AddScoped<IImageService, ImageService>();
 builder.Services.AddSingleton<IQueuePublisher, AzureQueuePublisher>();
 builder.Services.AddSingleton<ICreationProcessRepository, CreationProcessRepository>();
+builder.Services.AddSingleton<IGeneratedImageRepository, GeneratedImageRepository>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
