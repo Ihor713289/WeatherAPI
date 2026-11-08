@@ -6,6 +6,9 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <UserSecretsId>dotnet-StationDataRetriever-3a28d8bc-8f1f-4bb9-bdeb-fe30a4300ac0</UserSecretsId>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+        <!-- Image name for 'dotnet publish -t:PublishContainer' (used by deploy.ps1). -->
+        <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
+        <ContainerRepository>weatherapi-starter</ContainerRepository>
     </PropertyGroup>
 
     <ItemGroup>

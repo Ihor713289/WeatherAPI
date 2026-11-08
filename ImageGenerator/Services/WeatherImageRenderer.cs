@@ -12,7 +12,7 @@ namespace ImageGenerator.Services;
 /// <summary>Draws the weather overlay onto a background. Pure (no I/O), so it is easy to unit test.</summary>
 public static class WeatherImageRenderer
 {
-    // Fonts are resolved once per process. The container image installs fonts-dejavu-core (see Dockerfile).
+    // Resolved once per process: bundled Fonts/*.ttf first, system fonts as a fallback.
     private static readonly Lazy<FontFamily> FontFamily = new(ResolveFontFamily);
 
     public static void Render(Image<Rgba32> image, WeatherStation station, Image<Rgba32>? icon, string? attribution)
@@ -94,6 +94,26 @@ public static class WeatherImageRenderer
 
     private static FontFamily ResolveFontFamily()
     {
+        // Prefer the fonts shipped with the app (Fonts/*.ttf), so output is identical on every machine and
+        // works in container images without system fonts.
+        var fontsDirectory = System.IO.Path.Combine(AppContext.BaseDirectory, "Fonts");
+        if (Directory.Exists(fontsDirectory))
+        {
+            var collection = new FontCollection();
+            FontFamily? bundled = null;
+            foreach (var file in Directory.EnumerateFiles(fontsDirectory, "*.ttf"))
+            {
+                // Regular and bold share the family name, so both styles end up in the same family.
+                var family = collection.Add(file);
+                bundled ??= family;
+            }
+
+            if (bundled is { } bundledFamily)
+            {
+                return bundledFamily;
+            }
+        }
+
         foreach (var name in new[] { "DejaVu Sans", "Verdana", "Liberation Sans", "Arial" })
         {
             if (SystemFonts.TryGet(name, out var family))

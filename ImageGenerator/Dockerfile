@@ -1,9 +1,4 @@
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS base
-# The base image ships without fonts; ImageSharp needs at least one to draw text.
-USER root
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-dejavu-core \
-    && rm -rf /var/lib/apt/lists/*
 USER $APP_UID
 WORKDIR /app
 

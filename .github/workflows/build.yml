@@ -4,9 +4,12 @@
 #   ImageGenerator -> Azure Container Apps Job (triggered by the weather-images queue)
 #
 # One-time setup (see infra/README.md):
-#   Secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC federated credential),
-#              UNSPLASH_ACCESS_KEY
-#   Variables: AZURE_RESOURCE_GROUP (default rg-weatherapi), AZURE_LOCATION (default westeurope)
+#   1. Create the resource group and deploy infra/bootstrap/github-identity.bicep into it. That creates a
+#      user-assigned managed identity with a federated credential for this repo's "production"
+#      environment and Owner on the resource group (no Entra app registration / directory rights needed).
+#   2. Secrets:   AZURE_CLIENT_ID (the identity's clientId), AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#                 UNSPLASH_ACCESS_KEY
+#      Variables: AZURE_RESOURCE_GROUP (optional, default ib-weatherapi)
 
 name: Build and deploy
 
@@ -23,8 +26,7 @@ concurrency:
 
 env:
   DOTNET_VERSION: '10.0.x'
-  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'rg-weatherapi' }}
-  LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'ib-weatherapi' }}
 
 permissions:
   contents: read
@@ -47,7 +49,9 @@ jobs:
         run: dotnet build WeatherAPI.sln --configuration Release --no-restore
 
       - name: Lint Bicep
-        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+        run: |
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build --file infra/bootstrap/github-identity.bicep --stdout > /dev/null
 
   deploy:
     name: Deploy to Azure
@@ -63,6 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # OIDC login as the user-assigned managed identity from infra/bootstrap (no client secret).
       - name: Azure login
         uses: azure/login@v2
         with:
@@ -70,58 +75,28 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Create resource group
-        run: az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
-
-      - name: Provision infrastructure (storage, registry, environment)
-        id: infra
+      # The identity only has rights on this resource group, so it can't create it; fail early if missing.
+      - name: Check resource group
         run: |
-          outputs=$(az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "infra-${{ github.run_number }}" \
-            --template-file infra/main.bicep \
-            --parameters deployApps=false \
-            --query properties.outputs --output json)
-          echo "registry=$(echo "$outputs" | jq -r .registryName.value)" >> "$GITHUB_OUTPUT"
-          echo "loginServer=$(echo "$outputs" | jq -r .registryLoginServer.value)" >> "$GITHUB_OUTPUT"
+          if ! az group show --name "$RESOURCE_GROUP" --output none; then
+            echo "::error::Resource group '$RESOURCE_GROUP' not found or not accessible. Create it and deploy infra/bootstrap/github-identity.bicep first (see infra/README.md)."
+            exit 1
+          fi
 
-      - name: Build and push images
-        env:
-          REGISTRY: ${{ steps.infra.outputs.registry }}
-          LOGIN_SERVER: ${{ steps.infra.outputs.loginServer }}
-        run: |
-          az acr login --name "$REGISTRY"
-          # image name : Dockerfile (build context is the repository root)
-          for pair in weatherapi-api:WeatherAPI weatherapi-starter:ImageStarter weatherapi-generator:ImageGenerator; do
-            image="${pair%%:*}"; project="${pair##*:}"
-            docker build --file "$project/Dockerfile" \
-              --tag "$LOGIN_SERVER/$image:$IMAGE_TAG" \
-              --tag "$LOGIN_SERVER/$image:latest" .
-            docker push --all-tags "$LOGIN_SERVER/$image"
-          done
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Deploy API and jobs
-        id: apps
+      # Same script as a manual deployment: dotnet publish -> Bicep (infrastructure) -> push images
+      # with the .NET SDK -> Bicep (Container App + Jobs) -> smoke test.
+      - name: Deploy (deploy.ps1)
+        id: deploy
+        shell: pwsh
         env:
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
-        run: |
-          apiUrl=$(az deployment group create \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "apps-${{ github.run_number }}" \
-            --template-file infra/main.bicep \
-            --parameters deployApps=true imageTag="$IMAGE_TAG" unsplashAccessKey="$UNSPLASH_ACCESS_KEY" \
-            --query properties.outputs.apiUrl.value --output tsv)
-          echo "apiUrl=$apiUrl" >> "$GITHUB_OUTPUT"
-          echo "### API deployed: $apiUrl" >> "$GITHUB_STEP_SUMMARY"
+        run: ./deploy.ps1 -ResourceGroup "$env:RESOURCE_GROUP" -ImageTag "$env:IMAGE_TAG"
 
-      - name: Smoke test
-        env:
-          API_URL: ${{ steps.apps.outputs.apiUrl }}
-        run: |
-          # The API may scale from zero, so allow a few attempts. An unknown id must return 404.
-          for attempt in $(seq 1 10); do
-            status=$(curl --silent --output /dev/null --write-out '%{http_code}' "$API_URL/api/images/smoke-test" || true)
-            [ "$status" = "404" ] && echo "API is up" && exit 0
-            echo "Attempt $attempt: HTTP $status, retrying..."; sleep 15
-          done
-          echo "API did not respond as expected"; exit 1
+      - name: Summary
+        if: success()
+        run: | 
+          echo "### API deployed: ${{ steps.deploy.outputs.apiUrl }}" >> "$GITHUB_STEP_SUMMARY"

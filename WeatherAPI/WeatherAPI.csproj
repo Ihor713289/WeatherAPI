@@ -5,6 +5,9 @@
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+        <!-- Image name for 'dotnet publish -t:PublishContainer' (used by deploy.ps1). -->
+        <EnableSdkContainerSupport>true</EnableSdkContainerSupport>
+        <ContainerRepository>weatherapi-api</ContainerRepository>
     </PropertyGroup>
 
     <ItemGroup>
