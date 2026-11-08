@@ -1,49 +1,72 @@
 ﻿using WeatherAPI.DTOs;
-using WeatherAPI.Messaging;
-using WeatherAPI.Models;
 using WeatherAPI.Repositories.Blobs;
-using WeatherAPI.Repositories.Tables;
+using WeatherAPI.Shared.Contracts;
+using WeatherAPI.Shared.Queues;
+using WeatherAPI.Shared.Tables;
 
 namespace WeatherAPI.Services;
 
-public class ImageService: IImageService
+public sealed class ImageService(
+    IQueuePublisher<StartGenerationMessage> startPublisher,
+    ICreationProcessRepository processes,
+    IGeneratedImageRepository images,
+    IImageBlobRepository blobs,
+    ILogger<ImageService> logger) : IImageService
 {
-    private IQueuePublisher  _queuePublisher;
-    private ICreationProcessRepository  _creationProcessRepository;
-    private IGeneratedImageRepository  _generatedImageRepository;
-    private IImageBlobRepository _imageBlobRepository;
-    public ImageService(IQueuePublisher queuePublisher, ICreationProcessRepository creationProcessRepository, IGeneratedImageRepository generatedImageRepository, IImageBlobRepository imageBlobRepository)
+    public async Task<GenerationResponse> StartGenerationAsync(Func<string, string> statusUrl,
+        CancellationToken cancellationToken = default)
     {
-        _queuePublisher = queuePublisher;
-        _creationProcessRepository = creationProcessRepository;
-        _generatedImageRepository = generatedImageRepository;
-        _imageBlobRepository = imageBlobRepository;
-    }
-    public async Task<GenerationResponse> Generate()
-    {
-        string messageId = await _queuePublisher.PublishAsync("Generate message");
-        CreationProcess creationProcess = _creationProcessRepository.Generate(messageId);
-        return CreationModelToGenerationResponse(creationProcess);
-    }
+        var processId = Guid.NewGuid().ToString("N");
 
-    private GenerationResponse CreationModelToGenerationResponse(CreationProcess creationProcess)
-    {
-        return new GenerationResponse(creationProcess.RowKey, creationProcess.Status, creationProcess.ETag, creationProcess.Timestamp);
-    }
+        // Persist first, then enqueue: the starter job must always find the row it is asked to process.
+        var process = await processes.CreateAsync(processId, cancellationToken);
 
-    public async Task<FullGenerationResponse> GetGeneration(string id)
-    {
-        CreationProcess creationProcess = await _creationProcessRepository.GetCreationProcess(id);
-        List<GeneratedImage> generatedImages = await _generatedImageRepository.GetGeneratedImages(id);
-        
-        await Task.WhenAll(generatedImages.Select(async img =>
+        try
         {
-            img.SasUrl = await _imageBlobRepository.GetImageSasUrlAsync(img.ImageUrl);
-        }));
-        
-        List<GeneratedImageResponse> generatedImageResponses = generatedImages.Select(img => new GeneratedImageResponse(img.Status, img.SasUrl, img.ETag, img.StationName)).ToList();
+            await startPublisher.PublishAsync(new StartGenerationMessage(processId), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Could not queue process {ProcessId}", processId);
+            await processes.SetStatusAsync(processId, CreationStatus.Failed, "Could not queue the process.",
+                CancellationToken.None);
+            throw;
+        }
 
-        return new FullGenerationResponse(creationProcess.Status, creationProcess.ETag, creationProcess.Timestamp, generatedImageResponses);
+        return new GenerationResponse(processId, process.Status, statusUrl(processId), process.CreatedAt);
     }
-    
+
+    public async Task<FullGenerationResponse?> GetGenerationAsync(string id,
+        CancellationToken cancellationToken = default)
+    {
+        var process = await processes.GetAsync(id, cancellationToken);
+        if (process is null)
+        {
+            return null;
+        }
+
+        var rows = await images.GetByProcessAsync(id, cancellationToken);
+
+        var imageResponses = rows
+            .OrderBy(r => r.StationName)
+            .Select(r => new GeneratedImageResponse(
+                r.RowKey,
+                r.StationName,
+                r.Status,
+                r.Status == ImageStatus.Completed && r.BlobName is not null
+                    ? blobs.GetReadUrl(r.BlobName).ToString()
+                    : null,
+                r.Error))
+            .ToList();
+
+        return new FullGenerationResponse(
+            id,
+            process.Status,
+            process.CreatedAt,
+            process.ExpectedImages,
+            rows.Count(r => r.Status == ImageStatus.Completed),
+            rows.Count(r => r.Status == ImageStatus.Failed),
+            process.Error,
+            imageResponses);
+    }
 }

@@ -1,6 +1,19 @@
+### Local: http://localhost:5115
+### Azure: replace with the Container App URL, e.g. https://<app-name>.<env>.<region>.azurecontainerapps.io
 @WeatherAPI_HostAddress = http://localhost:5115
 
-GET {{WeatherAPI_HostAddress}}/weatherforecast/
+### Start a new image generation process (returns 202 + process id)
+POST {{WeatherAPI_HostAddress}}/api/images/generate
 Accept: application/json
 
-###
+> {%
+    client.global.set("processId", response.body.id);
+%}
+
+### Status of the process, with SAS links to every finished image
+GET {{WeatherAPI_HostAddress}}/api/images/{{processId}}
+Accept: application/json
+
+### Unknown process -> 404
+GET {{WeatherAPI_HostAddress}}/api/images/does-not-exist
+Accept: application/json

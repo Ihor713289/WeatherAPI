@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using ImageStarter.DTOs;
+using WeatherAPI.Shared.Contracts;
 
 namespace ImageGenerator.Helpers;
 
@@ -8,13 +8,14 @@ public record UnsplashImage(string PhotoId, string Photographer, byte[] Content)
 
 public interface IUnsplashHelper
 {
-    Task<UnsplashImage> GetLocationImageAsync(WeatherStation station, CancellationToken cancellationToken = default);
+    /// <summary>Returns a photo for the station's region, or null when Unsplash has no matching photo.</summary>
+    Task<UnsplashImage?> GetLocationImageAsync(WeatherStation station, CancellationToken cancellationToken = default);
 }
 
 public class UnsplashHelper : IUnsplashHelper
 {
     private const string SearchEndpoint = "https://api.unsplash.com/search/photos";
-    private const string FallbackQuery = "Netherlands map";
+    private const string FallbackQuery = "Netherlands landscape";
     private const int TargetWidth = 1080;
 
     private readonly HttpClient _httpClient;
@@ -29,16 +30,13 @@ public class UnsplashHelper : IUnsplashHelper
                      ?? throw new InvalidOperationException("Configuration value 'Unsplash:AccessKey' is missing.");
     }
 
-    public async Task<UnsplashImage> GetLocationImageAsync(WeatherStation station, CancellationToken cancellationToken = default)
+    public async Task<UnsplashImage?> GetLocationImageAsync(WeatherStation station,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(station);
 
-        var queries = new[]
-            {
-                $"{station.Region} map",
-                $"{station.Region} netherlands",
-                FallbackQuery
-            }
+        // Demo apps get 50 API requests per hour, so keep the number of searches per station minimal.
+        var queries = new[] { $"{station.Region} Netherlands", FallbackQuery }
             .Where(q => !string.IsNullOrWhiteSpace(q))
             .Distinct();
 
@@ -51,14 +49,16 @@ public class UnsplashHelper : IUnsplashHelper
                 continue;
             }
 
+            // Downloads from images.unsplash.com don't count against the API rate limit.
             var content = await _httpClient.GetByteArrayAsync(photo.Value.Url, cancellationToken);
             return new UnsplashImage(photo.Value.Id, photo.Value.Photographer, content);
         }
 
-        throw new InvalidOperationException($"No Unsplash image found for station {station.Id} ({station.Name}).");
+        return null;
     }
 
-    private async Task<(string Id, string Photographer, string Url)?> SearchAsync(string query, CancellationToken cancellationToken)
+    private async Task<(string Id, string Photographer, string Url)?> SearchAsync(string query,
+        CancellationToken cancellationToken)
     {
         var requestUri = $"{SearchEndpoint}?query={Uri.EscapeDataString(query)}&per_page=10&orientation=landscape";
 
@@ -72,24 +72,26 @@ public class UnsplashHelper : IUnsplashHelper
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
 
-        var results = json.RootElement.GetProperty("results");
-        if (results.GetArrayLength() == 0)
+        if (!json.RootElement.TryGetProperty("results", out var results) || results.GetArrayLength() == 0)
         {
             return null;
         }
 
         var photo = results[Random.Shared.Next(results.GetArrayLength())];
-        var rawUrl = photo.GetProperty("urls").GetProperty("raw").GetString();
+        var rawUrl = photo.TryGetProperty("urls", out var urls) && urls.TryGetProperty("raw", out var raw)
+            ? raw.GetString()
+            : null;
         if (rawUrl is null)
         {
             return null;
         }
 
-        var id = photo.GetProperty("id").GetString() ?? string.Empty;
+        var id = photo.TryGetProperty("id", out var idElement) ? idElement.GetString() ?? string.Empty : string.Empty;
         var photographer = photo.TryGetProperty("user", out var user) && user.TryGetProperty("name", out var name)
             ? name.GetString() ?? string.Empty
             : string.Empty;
 
+        // The raw URL already contains a query string (ixid=...), so append with '&'.
         return (id, photographer, $"{rawUrl}&w={TargetWidth}&fm=jpg&q=80&fit=max");
     }
 }

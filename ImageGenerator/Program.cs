@@ -1,20 +1,19 @@
-using Azure.Storage.Blobs;
 using ImageGenerator;
 using ImageGenerator.Helpers;
 using ImageGenerator.Services;
+using WeatherAPI.Shared;
+using WeatherAPI.Shared.Blobs;
+using WeatherAPI.Shared.Configuration;
+using WeatherAPI.Shared.Contracts;
 
+// Runs as an event-driven Azure Container Apps Job: processes the images queue, then exits.
 var builder = Host.CreateApplicationBuilder(args);
 
-var storageConnectionString = builder.Configuration["BlobConfig:ConnectionString"]
-                              ?? throw new InvalidOperationException("Connection string 'Storage' is missing.");
-
-builder.Services.AddSingleton(new BlobServiceClient(storageConnectionString));
-
-builder.Services.AddKeyedSingleton(ImageService.ImagesContainerKey, (sp, _) =>
-    CreateContainer(sp, builder.Configuration["BlobConfig:ContainerName"] ?? "images"));
-
-builder.Services.AddKeyedSingleton(ImageService.CacheContainerKey, (sp, _) =>
-    CreateContainer(sp, builder.Configuration["BlobConfig:CacheContainer"] ?? "temp-backgrounds"));
+builder.Services.AddWeatherStorage(builder.Configuration);
+builder.Services.AddQueueReader<StationImageMessage>(o => o.ImagesQueueName);
+builder.Services.AddBlobContainer(BlobContainerKeys.Images, o => o.ImagesContainerName);
+builder.Services.AddBlobContainer(BlobContainerKeys.BackgroundCache, o => o.BackgroundCacheContainerName);
+builder.Services.Configure<QueueJobOptions>(builder.Configuration.GetSection(QueueJobOptions.SectionName));
 
 void ConfigureClient(HttpClient client)
 {
@@ -23,17 +22,10 @@ void ConfigureClient(HttpClient client)
 }
 
 builder.Services.AddHttpClient<IUnsplashHelper, UnsplashHelper>(ConfigureClient);
-builder.Services.AddHttpClient(nameof(ImageService), ConfigureClient);
-builder.Services.AddTransient<IImageService, ImageService>();
+builder.Services.AddHttpClient(ImageService.HttpClientName, ConfigureClient);
+builder.Services.AddSingleton<IBackgroundProvider, CachedBackgroundProvider>();
+builder.Services.AddSingleton<IImageService, ImageService>();
 
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<ImageGenerationJob>();
 
-var host = builder.Build();
-host.Run();
-
-static BlobContainerClient CreateContainer(IServiceProvider sp, string name)
-{
-    var container = sp.GetRequiredService<BlobServiceClient>().GetBlobContainerClient(name);
-    container.CreateIfNotExists();
-    return container;
-}
+await builder.Build().RunAsync();

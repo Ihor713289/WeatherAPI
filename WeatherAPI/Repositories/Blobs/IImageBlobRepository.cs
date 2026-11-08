@@ -2,8 +2,6 @@
 
 public interface IImageBlobRepository
 {
-    public Task<string> UploadImageAsync(Stream imageStream, string fileName);
-    public Task DeleteImageAsync(string imageUrl);
-    public Task<string> GetImageSasUrlAsync(string imageUrl);
-    public Task<List<string>> GetImageSasUrlsAsync(List<string> imageUrls);
+    /// <summary>Returns a time-limited, read-only SAS URL for a blob in the (private) images container.</summary>
+    Uri GetReadUrl(string blobName);
 }
