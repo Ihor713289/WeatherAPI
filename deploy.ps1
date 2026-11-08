@@ -66,6 +66,42 @@ function Assert-ExitCode([string] $what) {
     }
 }
 
+# Prints the failed operations of a deployment, following nested (module) deployments, so the
+# actual cause is visible in the log instead of only "At least one resource deployment operation failed".
+function Show-DeploymentErrors([string] $deploymentName, [int] $depth = 0) {
+    if ($depth -gt 5) { return }
+
+    $failed = az deployment operation group list `
+        --resource-group $ResourceGroup `
+        --name $deploymentName `
+        --query "[?properties.provisioningState=='Failed'].{type: properties.targetResource.resourceType, name: properties.targetResource.resourceName, message: properties.statusMessage}" `
+        -o json 2>$null | ConvertFrom-Json
+
+    foreach ($operation in @($failed)) {
+        if (-not $operation) { continue }
+        if ($operation.type -eq 'Microsoft.Resources/deployments') {
+            Show-DeploymentErrors $operation.name ($depth + 1)
+            continue
+        }
+
+        $message = $operation.message | ConvertTo-Json -Depth 20 -Compress
+        Write-Host "Failed: $($operation.type)/$($operation.name)" -ForegroundColor Red
+        Write-Host "  $message"
+        if ($env:GITHUB_ACTIONS) {
+            Write-Host "::error title=$($operation.type)/$($operation.name)::$message"
+        }
+    }
+}
+
+function Assert-Deployment([string] $deploymentName, [string] $what) {
+    if ($LASTEXITCODE -ne 0) {
+        $exitCode = $LASTEXITCODE
+        Write-Host "`n$what failed. Failed operations:" -ForegroundColor Red
+        Show-DeploymentErrors $deploymentName
+        throw "$what failed with exit code $exitCode."
+    }
+}
+
 # ---------------------------------------------------------------------------------------------
 Write-Step 'Checking prerequisites'
 
@@ -113,13 +149,28 @@ $infra = az deployment group create `
     --template-file $template `
     --parameters deployApps=false namePrefix=$NamePrefix `
     --query properties.outputs -o json
-Assert-ExitCode 'Infrastructure deployment'
+Assert-Deployment "infra-$ImageTag" 'Infrastructure deployment'
 $infra = $infra | ConvertFrom-Json
 
 $registryName = $infra.registryName.value
 $loginServer = $infra.registryLoginServer.value
 Write-Host "Registry:     $loginServer"
 Write-Host "Storage:      $($infra.storageAccountName.value)"
+
+# Express environments can't host Container Apps Jobs. An environment that was created as express earlier
+# keeps that mode, so fail here with instructions instead of later with ExpressEnvironmentResourceNotSupported.
+$environmentId = $infra.environmentId.value
+$environmentMode = az resource show --ids $environmentId --api-version 2025-10-02-preview `
+    --query properties.environmentMode -o tsv 2>$null
+Write-Host "Environment:  $(Split-Path $environmentId -Leaf) (mode: $(if ($environmentMode) { $environmentMode } else { 'n/a' }))"
+if ($environmentMode -eq 'Express') {
+    throw @"
+The Container Apps environment '$(Split-Path $environmentId -Leaf)' is an *express* environment, which doesn't support Container Apps Jobs.
+Delete it (and the apps in it) once, then run the deployment again; it will be recreated in WorkloadProfiles mode:
+  az containerapp delete -g $ResourceGroup -n $NamePrefix-api --yes
+  az containerapp env delete -g $ResourceGroup -n $(Split-Path $environmentId -Leaf) --yes
+"@
+}
 
 # ---------------------------------------------------------------------------------------------
 Write-Step 'Publishing container images to the registry (dotnet publish -t:PublishContainer)'
@@ -171,7 +222,7 @@ try {
         --template-file $template `
         --parameters "@$parametersFile" `
         --query properties.outputs.apiUrl.value -o tsv
-    Assert-ExitCode 'App deployment'
+    Assert-Deployment "apps-$ImageTag" 'App deployment'
 }
 finally {
     Remove-Item $parametersFile -ErrorAction SilentlyContinue

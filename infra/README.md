@@ -31,12 +31,14 @@ done
 RG=rg-weatherapi
 az group create --name "$RG" --location westeurope
 
-# Identity + federated credential (repo:<owner>/<repo>:environment:production) + Owner on $RG
+# Identity + federated credentials (both GitHub subject formats) + Owner on $RG
 az deployment group create \
   --resource-group "$RG" \
   --name github-identity \
   --template-file infra/bootstrap/github-identity.bicep \
   --parameters repository=Ihor713289/WeatherAPI \
+               ownerId="$(gh api repos/Ihor713289/WeatherAPI --jq .owner.id)" \
+               repositoryId="$(gh api repos/Ihor713289/WeatherAPI --jq .id)" \
   --query properties.outputs -o json
 ```
 
@@ -55,8 +57,10 @@ gh secret set UNSPLASH_ACCESS_KEY   # paste the key when prompted
 
 Notes:
 
-- The deploy job uses `environment: production`; the federated credential's subject must match
-  (`repo:Ihor713289/WeatherAPI:environment:production`), otherwise login fails with `AADSTS70021`.
+- The deploy job uses `environment: production`. GitHub presents the token subject either as
+  `repo:Ihor713289/WeatherAPI:environment:production` or, in the immutable format, as
+  `repo:Ihor713289@<ownerId>/WeatherAPI@<repoId>:environment:production`. Passing `ownerId` and
+  `repositoryId` creates a credential for each; a mismatch fails login with `AADSTS700213`.
 - The identity can't create resource groups, so the workflow only checks that `$RG` exists.
 - If you delete the resource group, the identity goes with it. Re-run the bootstrap step afterwards
   and update `AZURE_CLIENT_ID` (the client id changes).

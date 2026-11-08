@@ -118,4 +118,5 @@ module generatorJob 'modules/generator-worker-container.bicep' = if (deployApps)
 output registryName string = registry.outputs.name
 output registryLoginServer string = registry.outputs.loginServer
 output storageAccountName string = storage.outputs.name
-output apiUrl string = deployApps ? api.outputs.url : ''
+output environmentId string = containerAppsEnvironment.outputs.id
+output apiUrl string = deployApps ? api!.outputs.url : ''

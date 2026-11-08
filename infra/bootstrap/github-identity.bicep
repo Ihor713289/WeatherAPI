@@ -14,26 +14,57 @@ param name string = 'id-github-weatherapi'
 @description('GitHub repository as "owner/repo".')
 param repository string
 
+@description('Numeric GitHub owner (user/org) id: `gh api repos/<owner>/<repo> --jq .owner.id`. Needed for the immutable subject format.')
+param ownerId string = ''
+
+@description('Numeric GitHub repository id: `gh api repos/<owner>/<repo> --jq .id`. Needed for the immutable subject format.')
+param repositoryId string = ''
+
 @description('GitHub environment used by the deploy job (must match `environment:` in build.yml).')
 param environmentName string = 'production'
+
+var ownerName = split(repository, '/')[0]
+var repositoryName = split(repository, '/')[1]
+
+// GitHub issues the token subject in one of two formats (repositories can opt into / be migrated to the
+// immutable one). Trust both, so login keeps working whichever one GitHub presents:
+//   repo:<owner>/<repo>:environment:<env>
+//   repo:<owner>@<ownerId>/<repo>@<repoId>:environment:<env>
+var subjects = concat(
+  [
+    { name: 'github-${environmentName}', subject: 'repo:${repository}:environment:${environmentName}' }
+  ],
+  empty(ownerId) || empty(repositoryId)
+    ? []
+    : [
+        {
+          name: 'github-${environmentName}-immutable'
+          subject: 'repo:${ownerName}@${ownerId}/${repositoryName}@${repositoryId}:environment:${environmentName}'
+        }
+      ]
+)
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: name
   location: location
 }
 
-// Trust OIDC tokens issued to the workflow's deploy job.
-resource githubCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
-  parent: identity
-  name: 'github-${environmentName}'
-  properties: {
-    issuer: 'https://token.actions.githubusercontent.com'
-    subject: 'repo:${repository}:environment:${environmentName}'
-    audiences: [
-      'api://AzureADTokenExchange'
-    ]
+// Trust OIDC tokens issued to the workflow's deploy job. Azure rejects concurrent writes of federated
+// credentials on the same identity, hence batchSize(1).
+@batchSize(1)
+resource githubCredentials 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = [
+  for credential in subjects: {
+    parent: identity
+    name: credential.name
+    properties: {
+      issuer: 'https://token.actions.githubusercontent.com'
+      subject: credential.subject
+      audiences: [
+        'api://AzureADTokenExchange'
+      ]
+    }
   }
-}
+]
 
 // Owner on this resource group only: main.bicep creates a role assignment (AcrPull for the apps'
 // pull identity), which Contributor is not allowed to do.
